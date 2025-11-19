@@ -1,154 +1,75 @@
-'use client';
-import { useEffect, useRef, useMemo } from 'react';
-import 'leaflet/dist/leaflet.css';
-import './MapContainerComponent.css';
+import { useState, useEffect, useRef } from "react"
+import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet"
+import L from "leaflet"
+import "leaflet/dist/leaflet.css"
+import styles from "./MapComponent.module.css"
 
-const MapContainerComponent = ({ mapData }) => {
-  const mapRef = useRef(null);
-  const mapContainerRef = useRef(null);
-  const userMarkerRef = useRef(null);
-  const leafletMarkersRef = useRef([]);
-  const baseIconSize = 20;
+// Fix default marker icons
+delete L.Icon.Default.prototype._getIconUrl
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl:
+    "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png",
+  iconUrl:
+    "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png",
+  shadowUrl:
+    "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png",
+})
 
-  // Prepare marker data
-  const markersData = useMemo(() => {
-    if (!mapData || mapData.length === 0) return [];
+export default function MapComponent({ location, onCoordinatesChange }) {
+  const [coordinates, setCoordinates] = useState(null) // Initialize as null
+  const defaultCoordinates = { lat: 27.7172, lng: 85.324 } // Default Kathmandu
+  const debounceTimer = useRef(null)
 
-    console.log("mapData", mapData);
-    return mapData.map((item) => ({
-      id: item.id,
-      pos: [parseFloat(item.latitude), parseFloat(item.longitude)],
-
-      name: item.name,     
-      picture: item.picture,
-      points: item.points,
-      description: item.description,
-
-      // popupDouble: {
-      //   description: item.doubleDescription || '',
-      //   image: item.doublePicture || '/images/default.png',
-      //   video: item.video || '',
-      //   audio: item.audio || ''
-      // }
-    }));
-  }, [mapData]);
-
-  // Initialize Leaflet Map
   useEffect(() => {
-    if (!mapContainerRef.current) return;
-
-    let L;
-    (async () => {
-      L = await import('leaflet');
-
-      delete L.Icon.Default.prototype._getIconUrl;
-      L.Icon.Default.mergeOptions({
-        iconUrl: '/leaflet/marker-icon.png',
-        iconRetinaUrl: '/leaflet/marker-icon-2x.png',
-        shadowUrl: '/leaflet/marker-shadow.png',
-      });
-
-      if (!mapRef.current) {
-        const map = L.map(mapContainerRef.current, {
-          center: [27.7172, 85.3240],
-          zoom: 14,
-          attributionControl: false,
-        });
-        mapRef.current = map;
-
-        L.tileLayer(
-          `https://api.maptiler.com/maps/streets/{z}/{x}/{y}.png?key=o5HKmzYWt25adtDkDQQK`,
-          { attribution: '' }
-        ).addTo(map);
-
-        map.on('zoom', () => {
-          const zoom = map.getZoom();
-          const scale = zoom / 14;
-          const newSize = baseIconSize * scale;
-          leafletMarkersRef.current.forEach((marker) =>
-            marker.setIcon(createQrIcon(newSize, L))
-          );
-        });
-
-        if (navigator.geolocation) {
-          navigator.geolocation.watchPosition(
-            ({ coords: { latitude: lat, longitude: lng } }) => {
-              if (!userMarkerRef.current) {
-                const userMarker = L.circleMarker([lat, lng], {
-                  radius: 4,
-                  color: 'red',
-                  weight: 2,
-                  opacity: 1,
-                  fillOpacity: 0.8,
-                }).addTo(map);
-                userMarker.bindPopup('<b>You are here!</b>');
-                userMarkerRef.current = userMarker;
-                userMarker.openPopup();
-              } else {
-                userMarkerRef.current.setLatLng([lat, lng]);
-              }
-            },
-            (err) => console.error('Geolocation error:', err),
-            { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-          );
+    if (debounceTimer.current) clearTimeout(debounceTimer.current)
+    if (!location) {
+      setCoordinates(null)
+      return
+    }
+    debounceTimer.current = setTimeout(async () => {
+      try {
+        const res = await fetch(
+          `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
+            location
+          )}`
+        )
+        const data = await res.json()
+        if (data.length > 0) {
+          const newCoordinates = {
+            lat: parseFloat(data[0].lat),
+            lng: parseFloat(data[0].lon),
+          }
+          setCoordinates(newCoordinates)
+          onCoordinatesChange(newCoordinates)
+        } else {
+          setCoordinates(null)
         }
+      } catch (error) {
+        setCoordinates(null)
       }
+    }, 500)
 
-      // Custom QR marker icon
-      function createQrIcon(size, L) {
-        return L.icon({
-          iconUrl: '/images/navPointLogo.png',
-          iconSize: [size, size],
-          iconAnchor: [size / 2, size / 2],
-          popupAnchor: [size / 2 + 15, 0],
-          className: 'qr-marker',
-        });
-      }
+    return () => clearTimeout(debounceTimer.current)
+  }, [location, onCoordinatesChange])
 
-      // Clear previous markers
-      leafletMarkersRef.current.forEach((marker) => marker.remove());
-      leafletMarkersRef.current = [];
-
-      // Add new markers
-      markersData.forEach((m) => {
-        const marker = L.marker(m.pos, { icon: createQrIcon(baseIconSize, L) }).addTo(mapRef.current);
-
-        //  On marker click → open fullscreen popup
-        marker.on('click', () => {
-          const popupHTML = `
-            <div class="popup-scanner-style">
-              <div class="popup-content-wrapper">
-                <div class="popup-image-container">
-                  ${m.picture ? `<img src="${m.picture}" class="popup-image" />` : ""}
-                </div>
-                <div class="popup-title">${m.name}</div>                
-                <div class="popup-points">Points: ${m.points}</div>
-                <hr>
-                <div class="popup-description">${m.description}</div>
-                <div class="popup-btn-container">
-                  <button id="popup-close-${m.id}" class="popup-close-btn">view on map</button>
-                </div>
-              </div>
-            </div>
-          `;
-          document.body.insertAdjacentHTML("beforeend", popupHTML);
-
-          // Close popup when clicking close button
-          document.getElementById(`popup-close-${m.id}`).addEventListener("click", () => {
-            document.querySelector(".popup-scanner-style")?.remove();
-          });
-        });
-
-        leafletMarkersRef.current.push(marker);
-      });
-    })();
-  }, [markersData]);
+  const displayCoordinates = coordinates || defaultCoordinates
 
   return (
-    <div className="map-wrapper">
-      <div className="map-container" ref={mapContainerRef}></div>
+    <div className={styles.mapContainer}>
+      <MapContainer
+        center={[displayCoordinates.lat, displayCoordinates.lng]}
+        zoom={12}
+        className={styles.leafletContainer}
+        key={`${displayCoordinates.lat}-${displayCoordinates.lng}`} // remount map on coords change
+      >
+        <TileLayer
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          attribution='© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        />
+        <Marker position={[displayCoordinates.lat, displayCoordinates.lng]}>
+          <Popup>{location}</Popup>
+        </Marker>
+      </MapContainer>
     </div>
-  );
-};
-
-export default MapContainerComponent;
+  )
+}
